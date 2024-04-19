@@ -2,15 +2,37 @@ import pandas as pd
 from transformers import AutoTokenizer, BertForTokenClassification, Trainer, TrainingArguments
 from torch.utils.data import Dataset, DataLoader
 import torch
+from torch.nn import CrossEntropyLoss
 from torch.utils.data import random_split
-from seqeval.metrics import accuracy_score, precision_score, recall_score, f1_score
-from seqeval.scheme import IOB2
+import evaluate
 import numpy as np
 import ast
 
+metric = evaluate.load("seqeval")
+label_names = {0: 'O', 1: 'B-TEMP', 2: 'I-TEMP'}
 special_tokens = {'[CLS]', '[SEP]', '[PAD]'}
 tag_to_ID = {'O': 0, 'B-TEMP': 1, 'I-TEMP': 2, '[CLS]': -100, '[SEP]': -100, '[PAD]': -100}
 tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def compute_metrics(eval_preds):
+    logits, labels = eval_preds
+    predictions = np.argmax(logits, axis=-1)
+
+    # Remove ignored index (special tokens) and convert to labels
+    true_labels = [[label_names[l] for l in label if l != -100] for label in labels]
+    true_predictions = [
+        [label_names[p] for (p, l) in zip(prediction, label) if l != -100]
+        for prediction, label in zip(predictions, labels)
+    ]
+    all_metrics = metric.compute(predictions=true_predictions, references=true_labels)
+    return {
+        "precision": all_metrics["overall_precision"],
+        "recall": all_metrics["overall_recall"],
+        "f1": all_metrics["overall_f1"],
+        "accuracy": all_metrics["overall_accuracy"],
+    }
 
 # Assign labels for temporal phrases using BIO scheme
 def token_to_tag_id(tokens, tokenized_temporal_phrases, to_id = False):
@@ -86,6 +108,20 @@ print(df.head()[['processed', 'labels']])
 encodings = {'input_ids': list(df['input_ids']), 'attention_mask': list(df['attention_mask'])}
 labels = list(df['labels'])
 
+labels_tensor = torch.tensor(labels)  # Convert labels list to a tensor
+# Flatten the labels tensor
+labels_flat = labels_tensor.view(-1)
+labels_flat = labels_flat[labels_flat != -100]
+# Calculate the number of occurrences of each class
+class_counts = torch.bincount(labels_flat, minlength=3)  # Assuming three classes
+
+# Calculate weights: Number of samples / (number of classes * number of samples for each class)
+total_samples = labels_tensor.size(0)
+num_classes = 3
+weights = total_samples / (class_counts * num_classes)
+
+print("Class weights:", weights)
+weights = weights.to(device)
 # Create dataset
 dataset = TemporalDataset(encodings, labels)
 # Split the dataset into training and validation sets
@@ -93,7 +129,7 @@ train_size = int(0.8 * len(dataset))
 val_size = len(dataset) - train_size
 train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
 
-model = BertForTokenClassification.from_pretrained('bert-base-uncased', num_labels=3)  # 2 labels: 'O' and 'TEMP'
+model = BertForTokenClassification.from_pretrained('bert-base-uncased', num_labels=len(label_names))  # 3 labels: 'O','I-TEMP' and 'B-TEMP'
 
 training_args = TrainingArguments(
     output_dir='./model/results',          # Where to store the output files
@@ -105,11 +141,22 @@ training_args = TrainingArguments(
     evaluation_strategy="epoch",
     save_strategy="epoch"
 )
-trainer = Trainer(
+class CustomTrainer(Trainer):
+    def compute_loss(self, model, inputs, return_outputs=False):
+        labels = inputs.pop("labels")
+        outputs = model(**inputs)
+        logits = outputs.logits
+        # Resize labels and logits for CrossEntropyLoss
+        loss_fct = CrossEntropyLoss(weight=weights.float())
+        loss = loss_fct(logits.view(-1, self.model.config.num_labels), labels.view(-1))
+        return (loss, outputs) if return_outputs else loss
+
+trainer = CustomTrainer(
     model=model,
     args=training_args,
     train_dataset=train_dataset,
     eval_dataset=val_dataset,
+    compute_metrics=compute_metrics
 )
 
 # Train the model

@@ -22,8 +22,10 @@ filtered_businesses = filtered_businesses[filtered_businesses['attributes'].appl
 # Filter reviews to include only those that match the business IDs in the filtered businesses
 filtered_reviews = review_df[review_df['business_id'].isin(filtered_businesses['business_id'])]
 
-# Aggregate reviews into a list per business
-review_groups = filtered_reviews.groupby('business_id')['text'].apply(list).reset_index(name='reviews')
+# Aggregate reviews into a list per business with review text and date
+review_groups = filtered_reviews.groupby('business_id').apply(
+    lambda x: [{'text': review, 'date': date} for review, date in zip(x['text'], x['date'])]
+).reset_index(name='reviews')
 
 # Merge the aggregated reviews with the filtered businesses
 final_df = pd.merge(filtered_businesses, review_groups, on='business_id', how='left')
