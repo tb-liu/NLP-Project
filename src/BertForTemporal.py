@@ -94,7 +94,7 @@ class TemporalDataset(Dataset):
         return len(self.labels)
 
 df = pd.read_csv('./data/reviews_with_temporal_info.csv')
-df = df.sample(300)
+df = df.sample(12000)
 
 # Apply function to each row in DataFrame
 # Convert the 'temporal_info' from string representation of a list to an actual list
@@ -133,9 +133,9 @@ model = BertForTokenClassification.from_pretrained('bert-base-uncased', num_labe
 
 training_args = TrainingArguments(
     output_dir='./model/results',          # Where to store the output files
-    num_train_epochs=3,              # Number of training epochs
+    num_train_epochs=6,              # Number of training epochs
     per_device_train_batch_size=16,  # Batch size for training
-    per_device_eval_batch_size=64,   # Batch size for evaluation
+    per_device_eval_batch_size=16,   # Batch size for evaluation
     warmup_steps=500,                # Number of warmup steps for learning rate scheduler
     weight_decay=0.01,               # Weight decay for regularization
     evaluation_strategy="epoch",
