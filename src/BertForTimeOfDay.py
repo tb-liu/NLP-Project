@@ -7,7 +7,7 @@ from transformers import AutoTokenizer, BertForSequenceClassification, Trainer, 
 from sklearn.metrics import precision_recall_fscore_support, accuracy_score
 from datasets import Dataset, DatasetDict
 
-time_dict = {'Morning': 0, 'Afternoon': 1, 'Evening': 2, 'Night': 3}
+time_dict = {'morning': 0, 'afternoon': 1, 'evening': 2, 'night': 3}
 
 def compute_metrics(eval_pred):
     logits, labels = eval_pred
@@ -31,26 +31,31 @@ def categorize_time_of_day(hour):
     else:
         return 'Night', time_dict['Night']
 
+
+
 # Tokenization function
 def tokenize_function(examples):
     return tokenizer(examples['text'], padding="max_length", truncation=True, max_length=512)
 
-df = pd.read_csv('./data/reviews_with_temporal_info.csv')
-df = df.sample(10000)
+# df = pd.read_csv('./data/reviews_with_temporal_info.csv')
+df = pd.read_csv('./data/reviews.csv')
+df['TOD'] = df['TOD'].str.lower()
+df['label'] = df['TOD'].map(time_dict)
+# df = df.sample(10000)
 # Convert the 'date' column to datetime type explicitly
-df['date'] = pd.to_datetime(df['date'], errors='coerce')  # 'coerce' will set invalid parsing as NaT
+# df['date'] = pd.to_datetime(df['date'], errors='coerce')  # 'coerce' will set invalid parsing as NaT
 
-# Apply the function and create a new temporary column for the tuples
-df['time_and_label'] = df['date'].dt.hour.apply(lambda x: categorize_time_of_day(x) if pd.notna(x) else (None, None))
+# # Apply the function and create a new temporary column for the tuples
+# df['time_and_label'] = df['date'].dt.hour.apply(lambda x: categorize_time_of_day(x) if pd.notna(x) else (None, None))
 
-# Split the tuple into two separate columns
-df[['time_of_day', 'label']] = pd.DataFrame(df['time_and_label'].tolist(), index=df.index)
+# # Split the tuple into two separate columns
+# df[['time_of_day', 'label']] = pd.DataFrame(df['time_and_label'].tolist(), index=df.index)
 
-# drop the temporary column
-df.drop('time_and_label', axis=1, inplace=True)
+# # drop the temporary column
+# df.drop('time_and_label', axis=1, inplace=True)
 
 # Display the updated DataFrame to verify the new columns
-print(df[['date', 'time_of_day', 'label']].head())
+print(df.head())
 
 # base model
 model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=len(time_dict))
@@ -68,13 +73,13 @@ dataset = DatasetDict({
 
 training_args = TrainingArguments(
     output_dir='./model/results/TOD',          # Where to store the output files
-    num_train_epochs=3,              # Number of training epochs
+    num_train_epochs=50,              # Number of training epochs
     per_device_train_batch_size=16,  # Batch size for training
     per_device_eval_batch_size=16,   # Batch size for evaluation
     warmup_steps=500,                # Number of warmup steps for learning rate scheduler
     weight_decay=0.01,               # Weight decay for regularization
     evaluation_strategy="epoch",
-    save_strategy="epoch"
+    # save_strategy="epoch"
 )
 
 trainer = Trainer(
@@ -88,7 +93,7 @@ trainer = Trainer(
 # Train the model
 trainer.train()
 results = trainer.evaluate()
-trainer.save_model('./model/time_of_day_prediction')
+# trainer.save_model('./model/time_of_day_prediction')
 print(results)
 # lol 
 # {'eval_loss': 1.2533844709396362, 'eval_accuracy': 0.423, 'eval_f1': 0.14862965565706254, 
@@ -97,3 +102,7 @@ print(results)
 # does not seems working, no implicit info of when the review was posted
 # Those review are data with temporal info, I would imagine the reviews without 
 # temporal info will be worse. 
+# When trained with review with much more obvious time of day info 
+# 'eval_accuracy': 0.5454545454545454, 'eval_f1': 0.5043290043290044, 
+# 'eval_precision': 0.5166666666666667, 'eval_recall': 0.5
+# wiht very limited training data, show better result than actual reviews
