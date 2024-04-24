@@ -1,6 +1,12 @@
 import pandas as pd
 from transformers import pipeline, BertForTokenClassification, AutoTokenizer
 import ast
+import re
+
+def normalize_text(phrase):
+    normalized_phrase = re.sub(r'[^a-z0-9]', '', phrase.lower())
+    return (normalized_phrase, phrase)
+
 # Function to extract phrases from predictions
 def extract_phrases(predictions):
     phrases = []
@@ -25,21 +31,25 @@ def extract_phrases(predictions):
     return phrases
 
 # Function to compare extracted phrases with ground truths
-def compare_phrases(predictions, ground_truths):
+def compare_phrases(predictions, ground_truths, texts, max_length = 500):
     results = []
-    for prediction, ground_truth in zip(predictions, ground_truths):
-        # Extract phrases and convert them to lowercase for case-insensitive comparison
-        extracted_phrases = [phrase.lower() for phrase in extract_phrases([prediction])]
-        ground_truth_set = [gt.lower() for gt in ground_truth]  # Assuming ground_truth is a list of strings
+    for prediction, ground_truth, text in zip(predictions, ground_truths, texts):
+        extracted_phrases = [normalize_text(phrase) for phrase in extract_phrases([prediction])]
+        extracted_set = {norm for norm, _ in extracted_phrases}
+        original_phrases = {orig for _ , orig in extracted_phrases}
 
-        # Convert lists to sets for comparison to identify mismatches
-        extracted_set = set(extracted_phrases)
-        ground_truth_set = set(ground_truth_set)
+        # Normalize ground truth phrases and retain originals
+        ground_truth_normalized = [normalize_text(gt) for gt in ground_truth]
+        ground_truth_set = {norm for norm, _ in ground_truth_normalized}
+        ground_truth_original = {orig for _ , orig in ground_truth_normalized}
+
         # Check if sets of phrases are different
         if set(extracted_set) != set(ground_truth_set):
+            display_text = text if len(text) <= max_length else "Text is too long to display."
             results.append({
-                "Extracted Phrases": extracted_phrases,
-                "Ground Truth": ground_truth
+                "Original Sentence": display_text,
+                "Extracted Phrases": original_phrases,
+                "Ground Truth": ground_truth_original,
             })
     return results
 
@@ -48,7 +58,7 @@ special_tokens = {'[CLS]', '[SEP]', '[PAD]'}
 tag_to_ID = {'O': 0, 'B-TEMP': 1, 'I-TEMP': 2, '[CLS]': -100, '[SEP]': -100, '[PAD]': -100}
 
 df = pd.read_csv('./data/reviews_with_temporal_info.csv')
-df = df.sample(10)
+df = df.sample(100)
 df['temporal_info'] = df['temporal_info'].apply(ast.literal_eval)
 
 # Load your trained model
@@ -64,12 +74,7 @@ print(df['text'].head())
 predictions = nlp_pipeline(df['text'].to_list())
 
 
-# Extract and print phrases for each text
-# for i in range(0, len(predictions)):
-#     phrases = extract_phrases([prediction])  # Note: wrapping prediction in a list
-
-#     print(f"Extracted Phrases: {phrases}")
-
-mismatches = compare_phrases(predictions, df['temporal_info'])
+mismatches = compare_phrases(predictions, df['temporal_info'], df['text'])
 for mismatch in mismatches:
+    print(f"Original Sentence: {mismatch['Original Sentence']}")
     print(f"Mismatch Found - Extracted Phrases: {mismatch['Extracted Phrases']} | Ground Truth: {mismatch['Ground Truth']}")
